@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-vars */
 import { useState, useEffect } from "react";
 import Navbar from "../components/Navbar";
 import Sidebar from "../components/Sidebar";
@@ -11,8 +10,10 @@ import {
   SignIn,
   useAuth,
   CreateOrganization,
+  useOrganizationList // <--- 1. Import this
 } from "@clerk/clerk-react";
 import { fetchWorkspaces } from "../features/workspaceSlice";
+import api from "../configs/api"; // <--- 2. Ensure you have your axios/api instance imported
 
 const Layout = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -21,18 +22,58 @@ const Layout = () => {
   const { user, isLoaded } = useUser();
   const { getToken } = useAuth();
 
-  // Initial load of theme
+  // 3. Get Clerk's Organization Data
+  const { userMemberships, isLoaded: isOrgLoaded } = useOrganizationList({
+    userMemberships: { infinite: true },
+  });
+
   useEffect(() => {
     dispatch(loadTheme());
-  }, []);
+  }, [dispatch]);
 
-  //Initial load of workspace
+  // Initial load of workspace
   useEffect(() => {
     if (isLoaded && user && workspaces.length === 0) {
-      console.log('Attempting to fetch workspaces on initial load');
       dispatch(fetchWorkspaces({ getToken }));
     }
-  }, [user, isLoaded]);
+  }, [user, isLoaded, dispatch, getToken]);
+
+  // --- 4. NEW: AUTO-SYNC LOGIC ---
+  useEffect(() => {
+    const syncMissingWorkspace = async () => {
+        // If Clerk lists organizations... but our Database (workspaces) is empty...
+        if (isLoaded && isOrgLoaded && userMemberships.count > 0 && workspaces.length === 0) {
+            
+            const clerkOrg = userMemberships.data[0].organization;
+            console.log("⚠️ Sync Mismatch detected. Triggering manual sync for:", clerkOrg.name);
+
+            try {
+                const token = await getToken();
+                // Call our new backend endpoint
+                await api.post('/api/workspaces/sync', {
+                    id: clerkOrg.id,
+                    name: clerkOrg.name,
+                    slug: clerkOrg.slug,
+                    imageUrl: clerkOrg.imageUrl
+                }, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+
+                // Wait 2 seconds for Inngest to finish, then refresh data
+                setTimeout(() => {
+                    console.log("♻️ Refreshing workspaces...");
+                    dispatch(fetchWorkspaces({ getToken }));
+                }, 2000);
+
+            } catch (err) {
+                console.error("Manual sync failed:", err);
+            }
+        }
+    };
+
+    syncMissingWorkspace();
+  }, [isLoaded, isOrgLoaded, userMemberships, workspaces.length, getToken, dispatch]);
+  // -------------------------------
 
   if (!user) {
     return (
@@ -42,55 +83,35 @@ const Layout = () => {
     );
   }
 
-  if (loading)
+  // 5. Loading State: Wait for both Workspace and Clerk Data
+  if (loading || !isOrgLoaded) {
     return (
       <div className="flex items-center justify-center h-screen bg-white dark:bg-zinc-950">
         <Loader2Icon className="size-7 text-blue-500 animate-spin" />
       </div>
     );
+  }
 
-  // in Layout return area where you render CreateOrganization
-  if (user && workspaces.length === 0) {
-    const onCreated = async () => {
-      try {
-        console.log('Organization created, waiting for workspace creation...');
-        // Add a small delay to allow the webhook to process the organization creation
-        setTimeout(async () => {
-          console.log('Attempting to fetch workspaces after organization creation');
-          try {
-            const token = await getToken();
-            console.log('Token obtained:', token ? 'Token exists' : 'No token');
-            dispatch(fetchWorkspaces({ getToken }));
-          } catch (tokenError) {
-            console.error('Error getting token:', tokenError);
-            // Retry after another delay
-            setTimeout(() => {
-              console.log('Retrying workspace fetch...');
-              dispatch(fetchWorkspaces({ getToken }));
-            }, 3000);
-          }
-        }, 2000);
-      } catch (e) {
-        console.error('Error in onCreated:', e);
-      }
-    };
+  // 6. Fix the "Force Create" Logic
+  // Only force creation if Clerk ALSO says you have 0 organizations
+  const hasClerkOrgs = userMemberships?.count > 0;
 
+  if (user && workspaces.length === 0 && !hasClerkOrgs) {
     return (
-      <div className="min-h-screen flex justify-center items-center">
-        <div className="flex flex-col items-center space-y-4">
-          <CreateOrganization onCreated={onCreated} />
-          <button 
-            onClick={() => {
-              console.log('Manual workspace fetch triggered');
-              dispatch(fetchWorkspaces({ getToken }));
-            }}
-            className="text-sm text-blue-500 hover:text-blue-600 underline"
-          >
-            Refresh Workspaces
-          </button>
-        </div>
+      <div className="min-h-screen flex justify-center items-center bg-white dark:bg-zinc-950">
+        <CreateOrganization afterCreateOrganizationUrl="/" />
       </div>
     );
+  }
+
+  // Optional: Show a "Syncing" screen if we are in that middle state
+  if (workspaces.length === 0 && hasClerkOrgs) {
+      return (
+          <div className="flex flex-col gap-4 items-center justify-center h-screen bg-white dark:bg-zinc-950">
+             <Loader2Icon className="size-8 text-blue-600 animate-spin" />
+             <p className="text-zinc-500 font-medium">Syncing your workspace...</p>
+          </div>
+      )
   }
 
   return (
