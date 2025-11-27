@@ -1,4 +1,5 @@
 import prisma from "../config/prisma.js"
+import {inngest} from "../inngest/index.js"
 // get All workspaces for user
 export const getUserWorkspaces = async (req, res)=>{
     try {
@@ -95,3 +96,35 @@ export const addMember = async(req , res) =>{
         res.status(400).json({message : error.message})
     }
 }
+
+export const syncWorkspace = async (req, res) => {
+    try {
+        const { userId } = await req.auth();
+        const { id, name, slug, imageUrl } = req.body;
+
+        if (!id || !name) {
+            return res.status(400).json({ message: "Missing workspace details" });
+        }
+
+        console.log(`Manually triggering sync for workspace: ${name}`);
+
+        // Manually send the event to Inngest
+        // We structure 'data' to match what Clerk would have sent
+        await inngest.send({
+            name: "clerk/organization.created", // Must match the event in your index.js
+            data: {
+                id: id,
+                name: name,
+                slug: slug,
+                image_url: imageUrl,
+                created_by: userId, // Important: maps to ownerId in your Inngest function
+            },
+            user: { id: userId }
+        });
+
+        res.status(200).json({ message: "Sync event triggered successfully" });
+    } catch (error) {
+        console.error("Sync Error:", error);
+        res.status(500).json({ message: error.message });
+    }
+};
