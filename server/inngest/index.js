@@ -6,8 +6,9 @@ export const inngest = new Inngest({ id: "project-management" });
 
 // Helper to safely extract fields from Clerk payload
 function extractUserFields(data) {
-  // The payload shape may vary; adjust if your event shows user under data.user
-  const user = data?.user ?? data ?? {};
+  // FIXED: Added check for data.data (Clerk's standard webhook structure)
+  const user = data?.user ?? data?.data ?? data ?? {};
+
   const email = user?.email_addresses?.[0]?.email_address ?? null;
   const name = [user?.first_name, user?.last_name].filter(Boolean).join(" ") || null;
   const image = user?.image_url ?? user?.profile_image_url ?? null;
