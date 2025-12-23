@@ -94,21 +94,21 @@ const syncUserUpdation = inngest.createFunction(
   }
 );
 
-// Helper to extract organization fields safely (adjust after inspecting real payload)
 function extractOrgFields(payload) {
-  // Clerk sometimes places the organization under payload.organization or directly in payload
-  const org = payload?.organization ?? payload ?? {};
+  // FIXED: Check for payload.data
+  const org = payload?.data ?? payload?.organization ?? payload ?? {};
+
   return {
     id: org?.id ?? null,
     name: org?.name ?? null,
     slug: org?.slug ?? org?.domain ?? null,
+    // Clerk usually sends 'created_by' as the user ID string
     ownerId: org?.created_by ?? org?.creator ?? org?.owner_id ?? null,
     image: org?.image_url ?? org?.profile_image_url ?? null,
   };
 }
-
-// Create / upsert workspace and add creator as ADMIN (transactional & idempotent)
-const syncWorkspaceCreation = inngest.createFunction(
+// Create / upsert workspace and add creator as ADMIN
+export const syncWorkspaceCreation = inngest.createFunction(
   { id: "sync-workspace-from-clerk" },
   { event: "clerk/organization.created" },
   async ({ event }) => {
@@ -117,28 +117,36 @@ const syncWorkspaceCreation = inngest.createFunction(
       const { id, name, slug, ownerId, image } = extractOrgFields(event.data);
 
       if (!id) throw new Error("Missing organization id in payload");
-      if (!ownerId) console.warn("No ownerId found in org payload (ownerId null) — proceeding anyway");
 
-      // Upsert workspace and ensure member exists. Use transaction so both succeed or fail.
-      await prisma.$transaction([
+      const operations = [];
+
+      // 1. Always upsert the Workspace
+      // FIXED: Mapped 'image' -> 'image_url' to match schema
+      operations.push(
         prisma.workspace.upsert({
           where: { id },
-          update: { name, slug, image },
-          create: { id, name, slug, ownerId, image },
-        }),
-        // Upsert workspace member — assumes workspaceMember model has a unique constraint on (userId, workspaceId)
-        prisma.workspaceMember.upsert({
-          where: {
-            // Replace this with your workspaceMember unique field; adjust accordingly.
-            // For example, if composite unique (userId_workspaceId) exists in Prisma, use that name.
-            userId_workspaceId: { userId: ownerId, workspaceId: id }
-          },
-          update: { role: "ADMIN" },
-          create: { userId: ownerId, workspaceId: id, role: "ADMIN" },
+          update: { name, slug, image_url: image },
+          create: { id, name, slug, ownerId, image_url: image },
         })
-      ]);
+      );
 
-      console.log(`Workspace upserted and admin ensured for workspace id=${id}`);
+      // 2. Add the Member if we have an ownerId
+      if (ownerId) {
+        operations.push(
+          prisma.workspaceMember.upsert({
+            where: {
+              userId_workspaceId: { userId: ownerId, workspaceId: id },
+            },
+            update: { role: "ADMIN" },
+            create: { userId: ownerId, workspaceId: id, role: "ADMIN" },
+          })
+        );
+      } else {
+        console.warn(`Skipping Member creation for workspace ${id}: No ownerId found.`);
+      }
+
+      await prisma.$transaction(operations);
+      console.log(`Workspace upserted (id=${id}). Member added? ${!!ownerId}`);
     } catch (err) {
       console.error("Error in syncWorkspaceCreation:", err);
       throw err;
@@ -147,7 +155,7 @@ const syncWorkspaceCreation = inngest.createFunction(
 );
 
 // Update workspace (idempotent using upsert)
-const syncWorkspaceUpdation = inngest.createFunction(
+export const syncWorkspaceUpdation = inngest.createFunction(
   { id: "update-workspace-from-clerk" },
   { event: "clerk/organization.updated" },
   async ({ event }) => {
@@ -156,15 +164,22 @@ const syncWorkspaceUpdation = inngest.createFunction(
       const { id, name, slug, image } = extractOrgFields(event.data);
       if (!id) throw new Error("Missing organization id in payload");
 
-      // Use upsert to avoid "not found" errors if record missing
-      await prisma.workspace.upsert({
+      // FIXED: Using .update() instead of .upsert()
+      // This prevents crashing on 'ownerId' requirements if the create event hasn't arrived yet.
+      // Inngest will retry this function automatically until the workspace exists.
+      await prisma.workspace.update({
         where: { id },
-        update: { name, slug, image },
-        create: { id, name, slug, image, ownerId: null },
+        data: {
+          name,
+          slug,
+          image_url: image, // FIXED: Mapped to schema field
+        },
       });
 
-      console.log(`Workspace updated/upserted id=${id}`);
+      console.log(`Workspace updated id=${id}`);
     } catch (err) {
+      // "Record to update not found" errors are expected if events are out of order.
+      // Throwing ensures Inngest retries later.
       console.error("Error in syncWorkspaceUpdation:", err);
       throw err;
     }
@@ -172,7 +187,7 @@ const syncWorkspaceUpdation = inngest.createFunction(
 );
 
 // Delete workspace safely (idempotent)
-const syncWorkspaceDeletion = inngest.createFunction(
+export const syncWorkspaceDeletion = inngest.createFunction(
   { id: "delete-workspace-with-clerk" },
   { event: "clerk/organization.deleted" },
   async ({ event }) => {
@@ -181,7 +196,10 @@ const syncWorkspaceDeletion = inngest.createFunction(
       const { id } = extractOrgFields(event.data);
       if (!id) throw new Error("Missing organization id in payload");
 
+      // deleteMany triggers DB-level cascades (projects, members) automatically
+      // because of 'onDelete: Cascade' in your schema.
       const result = await prisma.workspace.deleteMany({ where: { id } });
+      
       console.log(`Deleted ${result.count} workspace(s) with id=${id}`);
     } catch (err) {
       console.error("Error in syncWorkspaceDeletion:", err);
@@ -190,29 +208,43 @@ const syncWorkspaceDeletion = inngest.createFunction(
   }
 );
 
-// Workspace member creation (invitation accepted)
+// Inngest function to sync workspace members
 const syncWorkspaceMemberCreation = inngest.createFunction(
   { id: "sync-workspace-member-from-clerk" },
-  { event: "clerk/organizationInvitation.accepted" },
+  { event: "clerk/organizationMembership.created" }, // FIXED: Use Membership event
   async ({ event }) => {
     console.log("syncWorkspaceMemberCreation event:", event);
     try {
-      const payload = event.data ?? {};
-      // fields may be user_id, organization_id, role_name (adjust if payload differs)
-      const userId = payload?.user_id ?? payload?.userId ?? null;
-      const workspaceId = payload?.organization_id ?? payload?.organizationId ?? payload?.workspace_id ?? null;
-      const roleRaw = payload?.role_name ?? payload?.roleName ?? "MEMBER";
-      const role = String(roleRaw).toUpperCase();
+      const membership = event.data ?? {};
+
+      // 1. Extract IDs from the Membership object structure
+      // User ID is often in public_user_data
+      const userId =
+        membership.public_user_data?.user_id ??
+        membership.public_user_data?.userId ??
+        membership.user_id ?? // fallback
+        null;
+
+      // Organization ID is often in the 'organization' object
+      const workspaceId =
+        membership.organization?.id ??
+        membership.organization_id ?? // fallback
+        null;
 
       if (!userId || !workspaceId) {
         throw new Error(`Missing userId or workspaceId in payload: userId=${userId} workspaceId=${workspaceId}`);
       }
 
-      // Ensure workspace exists (optional). If you prefer, upsert member directly.
+      // 2. Map Clerk Roles (org:admin) to Prisma Enum (ADMIN)
+      const roleRaw = membership.role ?? "org:member";
+      // Converts "org:admin" -> "ADMIN", "org:member" -> "MEMBER"
+      const role = roleRaw.includes("admin") ? "ADMIN" : "MEMBER";
+
+      // 3. Upsert the Member
       await prisma.workspaceMember.upsert({
         where: {
-          // Use your actual unique constraint name here.
-          userId_workspaceId: { userId, workspaceId }
+          // Matches the @@unique constraint in your schema
+          userId_workspaceId: { userId, workspaceId },
         },
         update: { role },
         create: { userId, workspaceId, role },
@@ -225,7 +257,6 @@ const syncWorkspaceMemberCreation = inngest.createFunction(
     }
   }
 );
-
 
 
 // Export your functions so Inngest can find them
