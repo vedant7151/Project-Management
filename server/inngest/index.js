@@ -273,144 +273,77 @@ const sendTaskAssignmentEmail = inngest.createFunction(
   async ({ event, step }) => {
     const { taskId, origin } = event.data;
 
-    const task = await prisma.task.findUnique({
-      where: { id: taskId },
-      include: { assignee: true, project: true },
+    // STEP 1: Fetch the task (Wrapped in step for memoization)
+    const task = await step.run("fetch-task", async () => {
+      return await prisma.task.findUnique({
+        where: { id: taskId },
+        include: { assignee: true, project: true },
+      });
     });
 
-    await sendEmail({
-      to: task.assignee.email,
-      subject: `New Task Assignment in ${task.project.name} `,
-      body: `
-         <div style="max-width: 600px;">
-    <h2>Hi ${task.assignee.name} 👋</h2>
+    if (!task) return;
 
-    <p style="font-size: 16px;">
-      You've been assigned a new task:
-    </p>
-
-    <p style="
-      font-size: 18px;
-      font-weight: bold;
-      color: #007bff;
-      margin: 8px 0;
-    ">
-      ${task.title}
-    </p>
-
-    <div style="
-      border: 1px solid #ddd;
-      padding: 12px 16px;
-      border-radius: 6px;
-      margin-bottom: 30px;
-    ">
-      <p style="margin: 6px 0;">
-        <strong>Description:</strong> ${task.description}
-      </p>
-
-      <p style="margin: 6px 0;">
-        <strong>Due Date:</strong>
-        ${new Date(task.due_date).toLocaleDateString()}
-      </p>
-    </div>
-
-    <a href="${origin}" style="
-      background-color: #007bff;
-      padding: 12px 24px;
-      border-radius: 5px;
-      color: #fff;
-      font-weight: 600;
-      font-size: 16px;
-      text-decoration: none;
-      display: inline-block;
-    ">
-      View Task
-    </a>
-    <p style="margin-top: 20px; font-size: 14px; color: #6c757d;">
-  Please make sure to review and complete it before the due date.
-</p>
-
-  </div>
-
-      `,
+    // STEP 2: Send the initial email (Wrapped in step to prevent duplicates)
+    await step.run("send-initial-email", async () => {
+      await sendEmail({
+        to: task.assignee.email,
+        subject: `New Task Assignment in ${task.project.name}`,
+        body: `
+          <div style="max-width: 600px;">
+            <h2>Hi ${task.assignee.name} 👋</h2>
+            <p style="font-size: 16px;">You've been assigned a new task:</p>
+            <p style="font-size: 18px; font-weight: bold; color: #007bff; margin: 8px 0;">${task.title}</p>
+            <div style="border: 1px solid #ddd; padding: 12px 16px; border-radius: 6px; margin-bottom: 30px;">
+              <p style="margin: 6px 0;"><strong>Description:</strong> ${task.description}</p>
+              <p style="margin: 6px 0;"><strong>Due Date:</strong> ${new Date(task.due_date).toLocaleDateString()}</p>
+            </div>
+            <a href="${origin}" style="background-color: #007bff; padding: 12px 24px; border-radius: 5px; color: #fff; font-weight: 600; text-decoration: none; display: inline-block;">View Task</a>
+          </div>
+        `,
+      });
     });
 
-    if (
-      new Date(task.due_date).toLocaleDateString() !== new Date().toDateString()
-    ) {
+    // STEP 3: Check if we need to wait
+    const isFutureDate = new Date(task.due_date) > new Date();
+    
+    if (isFutureDate) {
+      // STEP 4: Sleep until due date
       await step.sleepUntil("wait-for-due-date", new Date(task.due_date));
 
-      await step.run("check-if-task-is-completed", async () => {
-        const task = await prisma.task.findUnique({
+      // STEP 5: Check status (Flattened: returns boolean)
+      const shouldSendReminder = await step.run("check-completion-status", async () => {
+        const latestTask = await prisma.task.findUnique({
           where: { id: taskId },
-          include: { assignee: true, project: true },
+          select: { status: true }, // Select only what we need
         });
-
-        if (!task) return;
-
-        if (task.status !== "DONE") {
-          await step.run("send-task-reminder-email", async () => {
-            await sendEmail({
-              to: task.assignee.email,
-              subject: `Reminder for ${task.project.name}`,
-              body: `
-               <div style="max-width: 600px;">
-    <h2>Hi ${task.assignee.name} 👋</h2>
-
-    <p style="font-size: 16px;">
-      You've been assigned a new task:
-    </p>
-
-    <p style="
-      font-size: 18px;
-      font-weight: bold;
-      color: #007bff;
-      margin: 8px 0;
-    ">
-      ${task.title}
-    </p>
-
-    <div style="
-      border: 1px solid #ddd;
-      padding: 12px 16px;
-      border-radius: 6px;
-      margin-bottom: 30px;
-    ">
-      <p style="margin: 6px 0;">
-        <strong>Description:</strong> ${task.description}
-      </p>
-
-      <p style="margin: 6px 0;">
-        <strong>Due Date:</strong>
-        ${new Date(task.due_date).toLocaleDateString()}
-      </p>
-    </div>
-
-    <a href="${origin}" style="
-      background-color: #007bff;
-      padding: 12px 24px;
-      border-radius: 5px;
-      color: #fff;
-      font-weight: 600;
-      font-size: 16px;
-      text-decoration: none;
-      display: inline-block;
-    ">
-      View Task
-    </a>
-    <p style="margin-top: 20px; font-size: 14px; color: #6c757d;">
-  Please make sure to review and complete it before the due date.
-</p>
-
-  </div>
-              `,
-            });
-          });
-        }
+        // Return true if task exists and is NOT done
+        return latestTask && latestTask.status !== "DONE";
       });
+
+      // STEP 6: Send reminder (Only runs if previous step returned true)
+      if (shouldSendReminder) {
+        await step.run("send-task-reminder-email", async () => {
+          await sendEmail({
+            to: task.assignee.email,
+            subject: `Reminder: Task Due in ${task.project.name}`, // Fixed Subject
+            body: `
+              <div style="max-width: 600px;">
+                <h2>Hi ${task.assignee.name} 👋</h2>
+                <p style="font-size: 16px; color: #d9534f;"><strong>Reminder:</strong> This task is due today!</p>
+                <p style="font-size: 18px; font-weight: bold; color: #007bff; margin: 8px 0;">${task.title}</p>
+                 <div style="border: 1px solid #ddd; padding: 12px 16px; border-radius: 6px; margin-bottom: 30px;">
+                  <p style="margin: 6px 0;"><strong>Description:</strong> ${task.description}</p>
+                </div>
+                <a href="${origin}" style="background-color: #d9534f; padding: 12px 24px; border-radius: 5px; color: #fff; font-weight: 600; text-decoration: none; display: inline-block;">Complete Task</a>
+              </div>
+            `,
+          });
+        });
+      }
     }
   }
 );
+
 
 // Export your functions so Inngest can find them
 export const functions = [
