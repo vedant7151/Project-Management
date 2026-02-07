@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { CheckSquareIcon, ChevronDownIcon, ChevronRightIcon } from 'lucide-react';
 import { useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
+import { useUser } from '@clerk/clerk-react';
 
 function MyTasksSidebar() {
-
-    const user = { id: 'user_1' }
+    // 1. FIX: Destructure 'user' from the hook result
+    const { user } = useUser();
 
     const { currentWorkspace } = useSelector((state) => state.workspace);
     const [showMyTasks, setShowMyTasks] = useState(false);
@@ -15,20 +16,19 @@ function MyTasksSidebar() {
 
     const getTaskStatusColor = (status) => {
         switch (status) {
-            case 'DONE':
-                return 'bg-green-500';
-            case 'IN_PROGRESS':
-                return 'bg-yellow-500';
-            case 'TODO':
-                return 'bg-gray-500 dark:bg-zinc-500';
-            default:
-                return 'bg-gray-400 dark:bg-zinc-400';
+            case 'DONE': return 'bg-green-500';
+            case 'IN_PROGRESS': return 'bg-yellow-500';
+            case 'TODO': return 'bg-gray-500 dark:bg-zinc-500';
+            default: return 'bg-gray-400 dark:bg-zinc-400';
         }
     };
 
     const fetchUserTasks = () => {
-        const userId = user?.id || '';
+        // 2. This will now work because 'user' is the actual User object
+        const userId = user?.id; 
+
         if (!userId || !currentWorkspace) return;
+
         const currentWorkspaceTasks = currentWorkspace.projects.flatMap((project) => {
             return project.tasks.filter((task) => task?.assignee?.id === userId);
         });
@@ -36,9 +36,10 @@ function MyTasksSidebar() {
         setMyTasks(currentWorkspaceTasks);
     }
 
+    // 3. FIX: Add 'user' to dependencies so it runs when user loads
     useEffect(() => {
-        fetchUserTasks()
-    }, [currentWorkspace])
+        fetchUserTasks();
+    }, [currentWorkspace, user]); 
 
     return (
         <div className="mt-6 px-3">

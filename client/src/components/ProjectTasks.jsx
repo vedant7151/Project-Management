@@ -5,6 +5,8 @@ import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { deleteTask, updateTask } from "../features/workspaceSlice";
 import { Bug, CalendarIcon, GitCommit, MessageSquare, Square, Trash, XIcon, Zap } from "lucide-react";
+import { useAuth } from "@clerk/clerk-react";
+import api from "../configs/api";
 
 const typeIcons = {
     BUG: { icon: Bug, color: "text-red-600 dark:text-red-400" },
@@ -21,6 +23,7 @@ const priorityTexts = {
 };
 
 const ProjectTasks = ({ tasks }) => {
+    const {getToken} = useAuth()
     const dispatch = useDispatch();
     const navigate = useNavigate();
     const [selectedTasks, setSelectedTasks] = useState([]);
@@ -55,34 +58,51 @@ const ProjectTasks = ({ tasks }) => {
     };
 
     const handleStatusChange = async (taskId, newStatus) => {
-        try {
-            toast.loading("Updating status...");
+    try {
+        toast.loading("Updating status...");
+        const token = await getToken();
+        
+        await api.put(
+            `/api/tasks/${taskId}`, 
+            { status: newStatus }, 
+            { 
+                headers: { 
+                    Authorization: `Bearer ${token}` // ✅ Ensure spelling is correct
+                }
+            }
+        );
 
-            //  Simulate API call
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+        // Update UI only if successful
+        let updatedTask = structuredClone(tasks.find((t) => t.id === taskId));
+        updatedTask.status = newStatus;
+        dispatch(updateTask(updatedTask));
 
-            let updatedTask = structuredClone(tasks.find((t) => t.id === taskId));
-            updatedTask.status = newStatus;
-            dispatch(updateTask(updatedTask));
+        toast.dismiss();
+        toast.success("Task status updated successfully");
 
-            toast.dismissAll();
-            toast.success("Task status updated successfully");
-        } catch (error) {
-            toast.dismissAll();
-            toast.error(error?.response?.data?.message || error.message);
-        }
-    };
+    } catch (error) {
+        toast.dismiss();
+        console.error("Update failed:", error);
+
+        // ✅ KEY FIX: Extract the specific backend message
+        // This ensures the user sees "Only team lead can update the task" 
+        // instead of "Request failed with status code 403"
+        const errorMessage = error.response?.data?.message || error.message || "Failed to update task";
+        
+        toast.error(errorMessage);
+    }
+};
 
     const handleDelete = async () => {
         try {
             const confirm = window.confirm("Are you sure you want to delete the selected tasks?");
             if (!confirm) return;
 
+            const token = await getToken()
             toast.loading("Deleting tasks...");
 
             //  Simulate API call
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-
+            await api.post("/api/tasks/delete" , {taskId : selectedTasks} , {headers : {Authorization : `Bearer ${token}`}})
             dispatch(deleteTask(selectedTasks));
 
             toast.dismissAll();

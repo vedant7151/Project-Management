@@ -3,113 +3,134 @@ import prisma from "../config/prisma.js"
 import { inngest } from "../inngest/index.js"
 
 //Create a new task
-export const createTask = async(req,res) =>{
+export const createTask = async (req, res) => {
     try {
-        const {userId} = await req.auth()
-        const {projectId , title , description , type , 
-            status, priority , assigneeId, due_date} = req.body
-
-        const origin = req.get('origin')
-
-        //Check if user has admin role for projects
-        const project = await prisma.project.findUnique({
-            where : {id : projectId},
-            include : {members : {include : {user : true}}}
+        // 1. Use the userId attached by middleware (more reliable)
+        const userId = req.userId; 
         
-        })
+        const { projectId, title, description, type, status, priority, assigneeId, due_date } = req.body;
 
-        if(!project){
-            return res.status(404).json({message : "Project not found"})
-        }else if (project.team_lead !== userId) {
-            return res.status(403).json({message : "You do not have admin rights for this project"})
-        } else if (assigneeId && !project.members.find((member) => member.user.id === assigneeId)) {
-            return res.status(403).json({message : "Assignne is not a member of the project / workspace"})
+        const origin = req.get('origin');
+
+        // 2. Fetch Project AND its Workspace to checks permissions
+        // We need 'workspace' to see if the user is an Org Admin
+        const project = await prisma.project.findUnique({
+            where: { id: projectId },
+            include: { 
+                members: { include: { user: true } },
+                workspace: { include: { members: true } } // <--- ADDED THIS
+            }
+        });
+
+        if (!project) {
+            return res.status(404).json({ message: "Project not found" });
         }
 
+        // 3. Permission Check: Admin OR Team Lead
+        const isWorkspaceAdmin = project.workspace.members.some(
+            (m) => m.userId === userId && m.role === "ADMIN"
+        );
+        const isTeamLead = project.team_lead === userId;
 
+        // If neither, block them
+        if (!isWorkspaceAdmin && !isTeamLead) {
+            return res.status(403).json({ message: "You do not have permission to create tasks in this project" });
+        }
+
+        // 4. Assignee Check
+        // Ensure the person you are assigning the task to is actually in the project
+        if (assigneeId) {
+            const isAssigneeInProject = project.members.some(
+                (member) => member.user.id === assigneeId
+            );
+
+            if (!isAssigneeInProject) {
+                return res.status(403).json({ message: "Assignee is not a member of this project" });
+            }
+        }
+
+        // 5. Create the Task
         const task = await prisma.task.create({
-            data : {
+            data: {
                 projectId,
                 title,
                 description,
                 priority,
-                assigneeId,
+                assigneeId, 
                 status,
-                due_date : new Date(due_date)
+                type, // Ensure your schema has 'type', otherwise remove this
+                due_date: due_date ? new Date(due_date) : null
             }
-        })
+        });
 
         const taskWithAssignee = await prisma.task.findUnique({
-            where : {id : task.id},
-            include : {assignee : true}
+            where: { id: task.id },
+            include: { assignee: true }
+        });
 
+        // 6. Send Email Notification (safely)
+        try {
+            await inngest.send({
+                name: "app/task.assigned",
+                data: {
+                    taskId: task.id,
+                    origin
+                }
+            });
+        } catch (emailError) {
+            console.log("Failed to queue email:", emailError);
+            // Don't fail the request just because email failed
+        }
 
-        })
-
-        //Send email
-        await inngest.send({
-            name : "app/task.assigned",
-            data : {
-                taskId : task.id,
-                origin
-            }
-        })
-
-        res.json({task : taskWithAssignee , message : "Task createed successfully"})
-
-
+        res.json({ task: taskWithAssignee, message: "Task created successfully" });
 
     } catch (error) {
-        console.log(error)
-        return res.status(500).json({message : error.code || error.message})
+        console.log(error);
+        res.status(500).json({ message: error.code || error.message });
     }
 }
 
 
 
-//Update task
-export const updateTask = async(req,res) =>{
+// Update task - RESTRICTED TO TEAM LEAD ONLY
+export const updateTask = async (req, res) => {
     try {
+        const userId = req.userId; 
 
         const task = await prisma.task.findUnique({
-            where : {id : req.params.id}
-        })
+            where: { id: req.params.id }
+        });
 
-
-        if(!task){
-            return res.status(404).json({message : "Task Not Found"})
+        if (!task) {
+            return res.status(404).json({ message: "Task Not Found" });
         }
-       
-        const {userId} = await req.auth()
-        
-        
+
         const project = await prisma.project.findUnique({
-            where : {id : task.projectId},
-            include : {members : {include : {user : true}}}
-        
-        })
+            where: { id: task.projectId }
+        });
 
-        if(!project){
-            return res.status(404).json({message : "Project not found"})
-        }else if (project.team_lead !== userId) {
-            return res.status(403).json({message : "You do not have admin rights for this project"})
-        } 
+        if (!project) {
+            return res.status(404).json({ message: "Project not found" });
+        }
 
-        const updatedTask  = await prisma.task.update({
-            where : {id : req.params.id},
-            data : req.body
-        })
+        // BLOCK NON-LEADS
+        if (project.team_lead !== userId) {
+            // We return 403, but with a SPECIFIC message
+            return res.status(403).json({ message: "Only team lead can update the task" });
+        }
 
-        res.json({task : updatedTask , message : "Task updated successfully"})
+        const updatedTask = await prisma.task.update({
+            where: { id: req.params.id },
+            data: req.body
+        });
 
-
+        res.json({ task: updatedTask, message: "Task updated successfully" });
 
     } catch (error) {
-        console.log(error)
-        return res.status(500).json({message : error.code || error.message})
+        console.log(error);
+        res.status(500).json({ message: error.code || error.message });
     }
 }
-
 
 //Delete task
 export const deleteTask = async(req,res) =>{

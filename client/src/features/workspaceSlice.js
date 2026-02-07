@@ -29,48 +29,159 @@ const initialState = {
 };
 
 const workspaceSlice = createSlice({
-    name: "workspace",
-    initialState,
-    reducers: {
-        setWorkspaces: (state, action) => { state.workspaces = action.payload; },
-        setCurrentWorkspace: (state, action) => {
-            localStorage.setItem("currentWorkspaceId", action.payload);
-            state.currentWorkspace = state.workspaces.find((w) => w.id === action.payload);
-        },
-        addWorkspace: (state, action) => {
-            state.workspaces.push(action.payload);
-            state.currentWorkspace = action.payload;
-        },
-        // ... (Keep your other reducers: updateWorkspace, deleteWorkspace, etc. here)
-        // For brevity I am not repeating them, but DO NOT DELETE THEM.
+  name: "workspace",
+  initialState,
+  reducers: {
+    setWorkspaces: (state, action) => {
+      state.workspaces = action.payload;
     },
-    extraReducers: (builder) => {
-        builder.addCase(fetchWorkspaces.pending, (state) => {
-            state.loading = true;
-            state.error = null; // Clear previous errors
-        });
 
-        builder.addCase(fetchWorkspaces.fulfilled, (state, action) => {
-            state.loading = false;
-            state.workspaces = action.payload;
-            state.error = null;
+    setCurrentWorkspace: (state, action) => {
+      localStorage.setItem("currentWorkspaceId", action.payload);
+      state.currentWorkspace = state.workspaces.find(
+        (w) => w.id === action.payload
+      );
+    },
 
-            // Smart Selection Logic
-            if (action.payload.length > 0) {
-                const savedId = localStorage.getItem('currentWorkspaceId');
-                const savedWorkspace = action.payload.find((w) => w.id === savedId);
-                state.currentWorkspace = savedWorkspace || action.payload[0];
-            } else {
-                state.currentWorkspace = null;
+    addWorkspace: (state, action) => {
+      state.workspaces.push(action.payload);
+
+      if (state.currentWorkspace?.id !== action.payload.id) {
+        state.currentWorkspace = action.payload;
+      }
+    },
+
+    updateWorkspace: (state, action) => {
+      state.workspaces = state.workspaces.map((w) =>
+        w.id === action.payload.id ? action.payload : w
+      );
+
+      if (state.currentWorkspace?.id === action.payload.id) {
+        state.currentWorkspace = action.payload;
+      }
+    },
+
+    deleteWorkspace: (state, action) => {
+      state.workspaces = state.workspaces.filter(
+        (w) => w._id !== action.payload
+      );
+    },
+
+    addProject: (state, action) => {
+      state.currentWorkspace.projects.push(action.payload);
+
+      state.workspaces = state.workspaces.map((w) =>
+        w.id === state.currentWorkspace.id
+          ? { ...w, projects: w.projects.concat(action.payload) }
+          : w
+      );
+    },
+
+    addTask: (state, action) => {
+      state.currentWorkspace.projects = state.currentWorkspace.projects.map(
+        (p) => {
+          if (p.id === action.payload.projectId) {
+            p.tasks.push(action.payload);
+          }
+          return p;
+        }
+      );
+
+      state.workspaces = state.workspaces.map((w) =>
+        w.id === state.currentWorkspace.id
+          ? {
+              ...w,
+              projects: w.projects.map((p) =>
+                p.id === action.payload.projectId
+                  ? { ...p, tasks: p.tasks.concat(action.payload) }
+                  : p
+              ),
             }
-        });
+          : w
+      );
+    },
 
-        builder.addCase(fetchWorkspaces.rejected, (state, action) => {
-            state.loading = false;
-            state.workspaces = []; // Ensure it's empty on failure
-            state.error = action.payload; // <--- CAPTURE THE ERROR
-        });
-    }
+    updateTask: (state, action) => {
+      state.currentWorkspace.projects.forEach((p) => {
+        if (p.id === action.payload.projectId) {
+          p.tasks = p.tasks.map((t) =>
+            t.id === action.payload.id ? action.payload : t
+          );
+        }
+      });
+
+      state.workspaces = state.workspaces.map((w) =>
+        w.id === state.currentWorkspace.id
+          ? {
+              ...w,
+              projects: w.projects.map((p) =>
+                p.id === action.payload.projectId
+                  ? {
+                      ...p,
+                      tasks: p.tasks.map((t) =>
+                        t.id === action.payload.id ? action.payload : t
+                      ),
+                    }
+                  : p
+              ),
+            }
+          : w
+      );
+    },
+
+    deleteTask: (state, action) => {
+      state.currentWorkspace.projects.forEach((p) => {
+        p.tasks = p.tasks.filter(
+          (t) => !action.payload.includes(t.id)
+        );
+      });
+
+      state.workspaces = state.workspaces.map((w) =>
+        w.id === state.currentWorkspace.id
+          ? {
+              ...w,
+              projects: w.projects.map((p) =>
+                p.id === action.payload.projectId
+                  ? {
+                      ...p,
+                      tasks: p.tasks.filter(
+                        (t) => !action.payload.includes(t.id)
+                      ),
+                    }
+                  : p
+              ),
+            }
+          : w
+      );
+    },
+  },
+
+  extraReducers: (builder) => {
+    builder.addCase(fetchWorkspaces.pending, (state) => {
+      state.loading = true;
+    });
+
+    builder.addCase(fetchWorkspaces.fulfilled, (state, action) => {
+      state.workspaces = action.payload;
+
+      if (action.payload.length > 0) {
+        const storedId = localStorage.getItem("currentWorkspaceId");
+
+        if (storedId) {
+          const found = action.payload.find((w) => w.id == storedId);
+          state.currentWorkspace = found || action.payload[0];
+        } else {
+          state.currentWorkspace = action.payload[0];
+        }
+      }
+
+      state.loading = false;
+    });
+
+    builder.addCase(fetchWorkspaces.rejected, (state) => {
+      state.loading = false;
+    });
+  },
 });
 
 // Export all your actions

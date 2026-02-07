@@ -1,38 +1,42 @@
 import prisma from "../config/prisma.js";
 
 // Get all workspaces
-export const getUserWorkspaces = async (req, res) => {
-    try {
-        // Use the userId attached by the protect middleware
-        const userId = req.userId;
+// controllers/workspaceController.js
 
+export const getUserWorkspaces = async (req , res) =>{
+    try {
+        const userId = req.userId; // Optimized from previous steps
         const workspaces = await prisma.workspace.findMany({
-            where: {
-                members: { some: { userId: userId } }
+            where : {
+                members : {some : {userId : userId}}
             },
-            include: {
-                members: { include: { user: true } },
-                projects: {
-                    include: {
-                        tasks: {
-                            include: {
-                                assignee: true,
-                                comments: { include: { user: true } }
+            include : {
+                members : {include : {user : true}},
+                projects : {
+                    include : {
+                        tasks : {
+                            include : {
+                                assignee : true , 
+                                comments : {include : { user : true}}
                             }
                         },
-                        members: {}
+                        // ❌ OLD: members : {} 
+                        // ✅ NEW: Fetch the User details inside the member!
+                        members : {
+                            include: { user: true } 
+                        }
                     }
                 },
-                owner: true
+                owner : true
             }
-        });
+        })
 
-        res.json({ workspaces });
+        res.json({workspaces})
     } catch (error) {
-        console.log(error);
-        res.status(500).json({ message: error.code || error.message });
+        console.log(error)
+        res.status(500).json({message : error.code || error.message})
     }
-};
+}
 
 // Add member to workspace
 export const addMember = async (req, res) => {
