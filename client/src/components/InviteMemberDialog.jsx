@@ -3,32 +3,46 @@
 import { useState } from "react";
 import { Mail, UserPlus } from "lucide-react";
 import { useSelector } from "react-redux";
-import {useOrganization} from "@clerk/clerk-react"
+import { useOrganization, useAuth } from "@clerk/clerk-react"
 import {toast} from "react-hot-toast"
+import api from "../configs/api";
+
 const InviteMemberDialog = ({ isDialogOpen, setIsDialogOpen }) => {
 
     const {organization} = useOrganization()
+    const { getToken } = useAuth()
     const currentWorkspace = useSelector((state) => state.workspace?.currentWorkspace || null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [formData, setFormData] = useState({
         email: "",
-        role: "org:member",
+        role: "MEMBER", // Default to Prisma value (was org:member)
     });
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setIsSubmitting(true)
         try {
-            await organization.inviteMember({
-                emailAddress : formData.email , 
-                role : formData.role
-            })
+            const token = await getToken();
+            // Use backend API to allow any member to add others (bypassing permissions)
+            // Note: This adds existing users directly. Role should be "MEMBER" or "ADMIN"
+            const roleToSend = formData.role.includes("admin") ? "ADMIN" : "MEMBER";
+            
+            await api.post('/api/workspaces/add-member', {
+                email: formData.email,
+                role: roleToSend,
+                workspaceId: currentWorkspace.id
+            }, {
+                headers: {
+                    Authorization: `Bearer ${token}`
+                }
+            });
 
-            toast.success("Invitation sent Successfully")
+            toast.success("Member added Successfully")
             setIsDialogOpen(false)
+            setFormData({ ...formData, email: "" }) // Reset form
         } catch (error) {
             console.log(error)
-            toast.error(error.message)
+            toast.error(error.response?.data?.message || error.message)
         }
         finally{
             setIsSubmitting(false)
@@ -70,8 +84,8 @@ const InviteMemberDialog = ({ isDialogOpen, setIsDialogOpen }) => {
                     <div className="space-y-2">
                         <label className="text-sm font-medium text-zinc-900 dark:text-zinc-200">Role</label>
                         <select value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value })} className="w-full rounded border border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-200 py-2 px-3 mt-1 focus:outline-none focus:border-blue-500 text-sm" >
-                            <option value="org:member">Member</option>
-                            <option value="org:admin">Admin</option>
+                            <option value="MEMBER">Member</option>
+                            <option value="ADMIN">Admin</option>
                         </select>
                     </div>
 

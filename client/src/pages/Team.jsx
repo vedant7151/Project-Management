@@ -3,6 +3,8 @@ import { UsersIcon, Search, UserPlus, Shield, Activity } from "lucide-react";
 import InviteMemberDialog from "../components/InviteMemberDialog";
 import { useSelector } from "react-redux";
 
+import { useOrganization } from "@clerk/clerk-react";
+
 const Team = () => {
 
     const [tasks, setTasks] = useState([]);
@@ -12,6 +14,10 @@ const Team = () => {
     const currentWorkspace = useSelector((state) => state?.workspace?.currentWorkspace || null);
     const projects = currentWorkspace?.projects || [];
 
+    // Clerk fallback
+    const { organization } = useOrganization();
+    
+    // Filter users (Restored logic)
     const filteredUsers = users.filter(
         (user) =>
             user?.user?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -19,9 +25,28 @@ const Team = () => {
     );
 
     useEffect(() => {
-        setUsers(currentWorkspace?.members || []);
+        const localMembers = currentWorkspace?.members || [];
+        
+        if (localMembers.length > 0) {
+            setUsers(localMembers);
+        } else if (organization) {
+            // Fallback: Fetch members from Clerk directly if local DB is empty
+            organization.getMemberships().then((res) => {
+                const mappedMembers = res.data.map(mem => ({
+                    id: mem.id,
+                    role: mem.role.includes("admin") ? "ADMIN" : "MEMBER",
+                    user: {
+                        name: `${mem.publicUserData.firstName || ''} ${mem.publicUserData.lastName || ''}`.trim() || mem.publicUserData.identifier,
+                        email: mem.publicUserData.identifier,
+                        image: mem.publicUserData.imageUrl
+                    }
+                }));
+                setUsers(mappedMembers);
+            }).catch(err => console.error("Failed to fetch Clerk members:", err));
+        }
+
         setTasks(currentWorkspace?.projects?.reduce((acc, project) => [...acc, ...project.tasks], []) || []);
-    }, [currentWorkspace]);
+    }, [currentWorkspace, organization]);
 
     return (
         <div className="space-y-6 max-w-6xl mx-auto">

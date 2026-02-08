@@ -4,13 +4,16 @@ import { format, isValid } from "date-fns";
 import { Plus, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 import AddProjectMember from "./AddProjectMember";
-import { useDispatch } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
 import { useAuth } from "@clerk/clerk-react";
 import toast from "react-hot-toast";
 import api from "../configs/api";
 import { fetchWorkspaces } from "../features/workspaceSlice";
 
 export default function ProjectSettings({ project }) {
+    const dispatch = useDispatch()
+    const {getToken, userId} = useAuth()
+    const currentWorkspace = useSelector((state) => state.workspace?.currentWorkspace);
 
     // 🚨 Guard: prevent crash if project is not loaded
     if (!project) {
@@ -22,9 +25,10 @@ export default function ProjectSettings({ project }) {
     }
 
     const members = project?.members ;
-
-    const dispatch = useDispatch()
-    const {getToken} = useAuth()
+    
+    // Check if user is Team Lead (Strictly Team Lead only as per request)
+    const isTeamLead = project?.team_lead === userId;
+    const canEdit = isTeamLead;
 
     const [formData, setFormData] = useState({
         name: "New Website Launch",
@@ -100,7 +104,13 @@ export default function ProjectSettings({ project }) {
                     Project Details
                 </h2>
 
+                {!canEdit && (
+                    <div className="bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 px-4 py-2 rounded mb-4 text-sm">
+                        Only the Team Lead can edit project details.
+                    </div>
+                )}
                 <form onSubmit={handleSubmit} className="space-y-4">
+                    <fieldset disabled={!canEdit} className="space-y-4 disabled:opacity-75">
 
                     {/* Name */}
                     <div className="space-y-2">
@@ -228,12 +238,13 @@ export default function ProjectSettings({ project }) {
                     {/* Save Button */}
                     <button
                         type="submit"
-                        disabled={isSubmitting}
-                        className="ml-auto flex items-center gap-2 bg-gradient-to-br from-blue-500 to-blue-600 text-white px-4 py-2 rounded"
+                        disabled={isSubmitting || !canEdit}
+                        className="ml-auto flex items-center gap-2 bg-gradient-to-br from-blue-500 to-blue-600 text-white px-4 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <Save className="size-4" />
                         {isSubmitting ? "Saving..." : "Save Changes"}
                     </button>
+                    </fieldset>
                 </form>
             </div>
 

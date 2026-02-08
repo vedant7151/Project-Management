@@ -13,8 +13,8 @@ import { fetchWorkspaces } from '../features/workspaceSlice'
 const Layout = () => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false)
     
-    // 1. EXTRACT 'error' FROM REDUX STATE
-    const { loading, workspaces, error } = useSelector((state) => state.workspace)
+    // 1. EXTRACT 'error', 'isFetched' FROM REDUX STATE
+    const { loading, workspaces, error, isFetched } = useSelector((state) => state.workspace)
     
     const dispatch = useDispatch()
     const { user, isLoaded } = useUser()
@@ -39,7 +39,8 @@ const Layout = () => {
         // 2. We are NOT currently loading
         // 3. We do NOT have a previous error (This stops the infinite loop!)
         // 4. Clerk says we actually have organizations to fetch
-        if (workspaces.length === 0 && !loading && !error && userMemberships.count > 0) {
+        // 5. We haven't fetched yet (prevents infinite loop if DB and Clerk are out of sync)
+        if (workspaces.length === 0 && !loading && !error && userMemberships.count > 0 && !isFetched) {
             dispatch(fetchWorkspaces({ getToken }))
         }
     }, [
@@ -50,7 +51,8 @@ const Layout = () => {
         loading, 
         error, // Added error to dependencies
         userMemberships.count, 
-        dispatch, 
+        dispatch,
+        isFetched, // Added isFetched to dependencies
         getToken
     ])
 
@@ -95,7 +97,7 @@ const Layout = () => {
     if (isOrgLoaded && userMemberships.count === 0 && workspaces.length === 0) {
         return (
             <div className='min-h-screen flex justify-center items-center bg-white dark:bg-zinc-950'>
-                <CreateOrganization />
+                <CreateOrganization skipInvitationScreen afterCreateOrganizationUrl='/' />
             </div>
         )
     }

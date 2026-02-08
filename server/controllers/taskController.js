@@ -26,16 +26,16 @@ export const createTask = async (req, res) => {
             return res.status(404).json({ message: "Project not found" });
         }
 
-        // 3. Permission Check: Admin OR Team Lead
-        const isWorkspaceAdmin = project.workspace.members.some(
-            (m) => m.userId === userId && m.role === "ADMIN"
-        );
-        const isTeamLead = project.team_lead === userId;
+        // 3. Permission Check: Admin OR Team Lead - DISABLED per request
+        // const isWorkspaceAdmin = project.workspace.members.some(
+        //     (m) => m.userId === userId && m.role === "ADMIN"
+        // );
+        // const isTeamLead = project.team_lead === userId;
 
-        // If neither, block them
-        if (!isWorkspaceAdmin && !isTeamLead) {
-            return res.status(403).json({ message: "You do not have permission to create tasks in this project" });
-        }
+        // // If neither, block them
+        // if (!isWorkspaceAdmin && !isTeamLead) {
+        //     return res.status(403).json({ message: "You do not have permission to create tasks in this project" });
+        // }
 
         // 4. Assignee Check
         // Ensure the person you are assigning the task to is actually in the project

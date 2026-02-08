@@ -1,4 +1,5 @@
 import prisma from "../config/prisma.js";
+import { clerkClient } from "@clerk/express";
 
 // Get all workspaces
 // controllers/workspaceController.js
@@ -72,33 +73,43 @@ export const addMember = async (req, res) => {
             return res.status(400).json({ message: "Workspace not found" });
         }
 
-        // 3. Check if requester (You) has Admin rights
-        const isAdmin = workspace.members.find(
-            (member) => member.userId === userId && member.role === "ADMIN"
-        );
+        // 3. Check if requester (You) has Admin rights - DISABLED per user request
+        // const isAdmin = workspace.members.find(
+        //     (member) => member.userId === userId && member.role === "ADMIN"
+        // );
+        // if (!isAdmin) {
+        //     return res.status(401).json({ message: "You do not have admin rights" });
+        // }
 
-        if (!isAdmin) {
-            return res.status(401).json({ message: "You do not have admin rights" });
+        // 0. Ensure user is added to Clerk Organization (Sync Fix)
+        try {
+            const clerkRole = role === "ADMIN" ? "org:admin" : "org:member";
+            await clerkClient.organizations.createOrganizationMembership({
+                organizationId: workspaceId,
+                userId: user.id,
+                role: clerkRole,
+            });
+        } catch (clerkError) {
+            // Check if error is "already a member" or similar - log and continue to ensure DB is synced
+            console.log("Clerk sync warning (user might already be in org):", clerkError.message || clerkError);
         }
 
-        // 4. Check if the TARGET USER is already a member
-        // (Fixed: Comparing user.id, not userId)
+        // 4. Check if the TARGET USER is already a member (DB Check)
         const existingMember = workspace.members.find(
             (member) => member.userId === user.id
         );
 
+        // If in DB, just return success (idempotent for "Repair")
         if (existingMember) {
-            return res.status(400).json({ message: "User is already a member" });
+            return res.json({ member: existingMember, message: "User is already a member (Sync updated)" });
         }
 
-        // 5. Create the member
+        // 5. Create the member in DB
         const member = await prisma.workspaceMember.create({
             data: {
                 userId: user.id,
                 workspaceId, // Matches variable name
                 role,
-                // Note: Ensure your Prisma Schema has a 'message' field for workspaceMember
-                // If not, remove the line below:
                 message 
             }
         });

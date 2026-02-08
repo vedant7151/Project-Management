@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSelector } from "react-redux";
 import { Plus, Search, FolderOpen } from "lucide-react";
 import ProjectCard from "../components/ProjectCard";
@@ -6,11 +6,10 @@ import CreateProjectDialog from "../components/CreateProjectDialog";
 
 export default function Projects() {
     
-    const projects = useSelector(
+    const allProjects = useSelector(
         (state) => state?.workspace?.currentWorkspace?.projects || []
     );
 
-    const [filteredProjects, setFilteredProjects] = useState([]);
     const [searchTerm, setSearchTerm] = useState("");
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [filters, setFilters] = useState({
@@ -18,11 +17,12 @@ export default function Projects() {
         priority: "ALL",
     });
 
-    const filterProjects = () => {
-        let filtered = projects;
+    // Use useMemo for derived state to avoid unnecessary renders and side effects
+    const filteredProjects = useMemo(() => {
+        let result = allProjects;
 
         if (searchTerm) {
-            filtered = filtered.filter(
+            result = result.filter(
                 (project) =>
                     project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                     project.description?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -30,21 +30,23 @@ export default function Projects() {
         }
 
         if (filters.status !== "ALL") {
-            filtered = filtered.filter((project) => project.status === filters.status);
+            result = result.filter((project) => project.status === filters.status);
         }
 
         if (filters.priority !== "ALL") {
-            filtered = filtered.filter(
+            result = result.filter(
                 (project) => project.priority === filters.priority
             );
         }
 
-        setFilteredProjects(filtered);
-    };
+        return result;
+    }, [allProjects, searchTerm, filters]);
 
+    // Debug logging to verify mounting/unmounting behavior
     useEffect(() => {
-        filterProjects();
-    }, [projects, searchTerm, filters]);
+        console.log("Projects component mounted");
+        return () => console.log("Projects component unmounted");
+    }, []);
 
     return (
         <div className="space-y-6 max-w-6xl mx-auto">

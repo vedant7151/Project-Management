@@ -5,16 +5,25 @@ import { useDispatch, useSelector } from "react-redux";
 import { setCurrentWorkspace } from "../features/workspaceSlice";
 import { useNavigate } from "react-router-dom";
 import { dummyWorkspaces } from "../assets/assets";
-import { useClerk, useOrganizationList } from "@clerk/clerk-react";
+import { useClerk, useOrganization, useOrganizationList } from "@clerk/clerk-react";
 
 function WorkspaceDropdown() {
 
     const {setActive, userMemberships , isLoaded} = useOrganizationList({userMemberships : true})
+    const { organization } = useOrganization();
 
     const {openCreateOrganization} = useClerk()
 
     const { workspaces } = useSelector((state) => state.workspace);
     const currentWorkspace = useSelector((state) => state.workspace?.currentWorkspace || null);
+    
+    // Fallback logic: Use Redux workspace if available, otherwise Clerk organization
+    const displayWorkspace = currentWorkspace || (organization ? {
+        id: organization.id,
+        name: organization.name,
+        image_url: organization.imageUrl
+    } : null);
+
     const [isOpen, setIsOpen] = useState(false);
     const dropdownRef = useRef(null);
 
@@ -43,19 +52,19 @@ function WorkspaceDropdown() {
         if (currentWorkspace && isLoaded) {
             setActive({organization : currentWorkspace.id})
         }
-    } , [currentWorkspace , isLoaded])
+    }, [currentWorkspace , isLoaded])
 
     return (
         <div className="relative m-4" ref={dropdownRef}>
             <button onClick={() => setIsOpen(prev => !prev)} className="w-full flex items-center justify-between p-3 h-auto text-left rounded hover:bg-gray-100 dark:hover:bg-zinc-800" >
                 <div className="flex items-center gap-3">
-                    <img src={currentWorkspace?.image_url} alt={currentWorkspace?.name} className="w-8 h-8 rounded shadow" />
+                    <img src={displayWorkspace?.image_url} alt={displayWorkspace?.name} className="w-8 h-8 rounded shadow" />
                     <div className="min-w-0 flex-1">
                         <p className="font-semibold text-gray-800 dark:text-white text-sm truncate">
-                            {currentWorkspace?.name || "Select Workspace"}
+                            {displayWorkspace?.name || "Select Workspace"}
                         </p>
                         <p className="text-xs text-gray-500 dark:text-zinc-400 truncate">
-                            {workspaces.length} workspace{workspaces.length !== 1 ? "s" : ""}
+                            {workspaces.length} workspaces
                         </p>
                     </div>
                 </div>
@@ -68,18 +77,18 @@ function WorkspaceDropdown() {
                         <p className="text-xs text-gray-500 dark:text-zinc-400 uppercase tracking-wider mb-2 px-2">
                             Workspaces
                         </p>
-                        {userMemberships.data.map(({organization}) => (
-                            <div key={organization.id} onClick={() => onSelectWorkspace(organization.id)} className="flex items-center gap-3 p-2 cursor-pointer rounded hover:bg-gray-100 dark:hover:bg-zinc-800" >
-                                <img src={organization.imageUrl} alt={organization.name} className="w-6 h-6 rounded" />
+                        {workspaces.map((workspace) => (
+                            <div key={workspace.id} onClick={() => onSelectWorkspace(workspace.id)} className="flex items-center gap-3 p-2 cursor-pointer rounded hover:bg-gray-100 dark:hover:bg-zinc-800" >
+                                <img src={workspace.image_url || workspace.imageUrl} alt={workspace.name} className="w-6 h-6 rounded" />
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm font-medium text-gray-800 dark:text-white truncate">
-                                        {organization.name}
+                                        {workspace.name}
                                     </p>
                                     <p className="text-xs text-gray-500 dark:text-zinc-400 truncate">
-                                        {organization.membersCount || 0} members
+                                        {workspace.members?.length || 0} members
                                     </p>
                                 </div>
-                                {currentWorkspace?.id === organization.id && (
+                                {currentWorkspace?.id === workspace.id && (
                                     <Check className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
                                 )}
                             </div>
