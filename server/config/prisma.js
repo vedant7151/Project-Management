@@ -6,12 +6,13 @@ import { neonConfig } from '@neondatabase/serverless'
 import ws from 'ws'
 
 const { PrismaClient } = pkg
-neonConfig.webSocketConstructor = ws
+// neonConfig.webSocketConstructor = ws
 
-const connectionString = process.env.DATABASE_URL
-const adapter = new PrismaNeon({ connectionString })
+// const connectionString = process.env.DATABASE_URL
+// const adapter = new PrismaNeon({ connectionString })
 
-const prisma = global.prisma || new PrismaClient({ adapter })
+// Use standard PrismaClient for valid Railway deployment (TCP connection)
+const prisma = global.prisma || new PrismaClient()
 
 if (process.env.NODE_ENV === 'development') global.prisma = prisma
 
